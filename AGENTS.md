@@ -124,3 +124,4 @@ All API error responses must adhere strictly to this schema:
   - [ ] Are all secrets isolated in `.env`?
   - [ ] Are logs free of raw text/PII?
   - [ ] Is error handling conforming to `{"error": {"code", "message", "request_id"}}`?
+
