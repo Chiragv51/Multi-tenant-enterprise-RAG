@@ -1,0 +1,44 @@
+# Environment variables & secrets (NEVER commit secrets!)
+.env
+.env.*
+!.env.example
+
+# Python virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Testing, linting & type-check caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Local raw data & test artifacts (prevent uploading large/private docs)
+data/
+
+# Local database & object storage volumes
+postgres_data/
+minio_data/
+redis_data/
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
