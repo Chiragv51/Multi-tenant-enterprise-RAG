@@ -6,3 +6,4 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- Enable pg_trgm for full-text / trigram fuzzy matching
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
+

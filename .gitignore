@@ -14,6 +14,11 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Build & distribution artifacts
+dist/
+build/
+*.egg-info/
+
 # Testing, linting & type-check caches
 .pytest_cache/
 .ruff_cache/
