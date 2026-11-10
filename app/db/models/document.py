@@ -16,7 +16,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.models.base import Base, timestamp_now
 
 
-class DocumentStatus(str, enum.Enum):
+class DocumentStatus(enum.StrEnum):
     pending = "pending"
     indexed = "indexed"
     failed = "failed"

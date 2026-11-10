@@ -16,7 +16,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.models.base import Base, timestamp_now
 
 
-class JobStatus(str, enum.Enum):
+class JobStatus(enum.StrEnum):
     pending = "pending"
     running = "running"
     succeeded = "succeeded"

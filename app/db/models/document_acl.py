@@ -19,7 +19,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.models.base import Base, timestamp_now
 
 
-class PrincipalType(str, enum.Enum):
+class PrincipalType(enum.StrEnum):
     user = "user"
     group = "group"
     tenant = "tenant"
