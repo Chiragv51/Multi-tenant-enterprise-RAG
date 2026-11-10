@@ -37,4 +37,3 @@ async def test_error_response_format():
         assert "code" in data["error"]
         assert "message" in data["error"]
         assert "request_id" in data["error"]
-
