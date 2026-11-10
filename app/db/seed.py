@@ -15,8 +15,13 @@ import hashlib
 import logging
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
+from app.core.config import get_settings
 from app.db.models import (
     Chunk,
     Document,
@@ -28,10 +33,23 @@ from app.db.models import (
     User,
     UserGroup,
 )
-from app.db.session import AsyncSessionLocal, close_db
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger("seed")
+settings = get_settings()
+
+# Administrative seed engine uses the privileged migration/DB owner connection
+seed_engine = create_async_engine(
+    settings.DATABASE_URL,
+    echo=False,
+    pool_pre_ping=True,
+)
+SeedSessionLocal = async_sessionmaker(
+    bind=seed_engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+    autoflush=False,
+)
 
 SEED_DATA = [
     {
@@ -291,7 +309,7 @@ async def seed_tenant(session: AsyncSession, data: dict) -> Tenant:
 
 async def seed_all() -> None:
     logger.info("Starting database seed...")
-    async with AsyncSessionLocal() as session:
+    async with SeedSessionLocal() as session:
         async with session.begin():
             for tenant_data in SEED_DATA:
                 await seed_tenant(session, tenant_data)
@@ -302,7 +320,7 @@ async def main() -> None:
     try:
         await seed_all()
     finally:
-        await close_db()
+        await seed_engine.dispose()
 
 
 if __name__ == "__main__":

@@ -52,3 +52,15 @@ async def test_get_tenant_db_yields_session():
         assert isinstance(session, AsyncSession)
     finally:
         await generator.aclose()
+
+
+def test_runtime_engine_uses_rag_app_role():
+    """Assert that runtime engine connects as the non-superuser rag_app role, never rag_user."""
+    engine_url = engine.url
+    assert engine_url.username == "rag_app", (
+        f"Critical security violation: Runtime engine is connecting as '{engine_url.username}', "
+        "expected 'rag_app'! Superusers bypass PostgreSQL Row-Level Security."
+    )
+    assert (
+        engine_url.username != "rag_user"
+    ), "Critical security violation: Runtime engine must NEVER connect as the privileged migration owner 'rag_user'!"

@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
 
-    # PostgreSQL
+    # PostgreSQL - Migration / Admin connection (used by Alembic migrations)
     POSTGRES_USER: str = "rag_user"
     POSTGRES_PASSWORD: str = "rag_secure_password"
     POSTGRES_DB: str = "rag_enterprise_db"
@@ -25,15 +25,13 @@ class Settings(BaseSettings):
     DATABASE_URL: str = (
         "postgresql+asyncpg://rag_user:rag_secure_password@localhost:5433/rag_enterprise_db"
     )
+
+    # PostgreSQL - Application Runtime Role (NOSUPERUSER, NOBYPASSRLS, used by API engine)
     POSTGRES_APP_USER: str = "rag_app"
     POSTGRES_APP_PASSWORD: str = "rag_app_password"
-
-    @property
-    def APP_DATABASE_URL(self) -> str:
-        return (
-            f"postgresql+asyncpg://{self.POSTGRES_APP_USER}:{self.POSTGRES_APP_PASSWORD}@"
-            f"{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
-        )
+    APP_DATABASE_URL: str = (
+        "postgresql+asyncpg://rag_app:rag_app_password@localhost:5433/rag_enterprise_db"
+    )
 
     # Redis
     REDIS_HOST: str = "localhost"
