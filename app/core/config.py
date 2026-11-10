@@ -21,9 +21,9 @@ class Settings(BaseSettings):
     POSTGRES_PASSWORD: str = "rag_secure_password"
     POSTGRES_DB: str = "rag_enterprise_db"
     POSTGRES_HOST: str = "localhost"
-    POSTGRES_PORT: int = 5432
+    POSTGRES_PORT: int = 5433
     DATABASE_URL: str = (
-        "postgresql+asyncpg://rag_user:rag_secure_password@localhost:5432/rag_enterprise_db"
+        "postgresql+asyncpg://rag_user:rag_secure_password@localhost:5433/rag_enterprise_db"
     )
 
     # Redis

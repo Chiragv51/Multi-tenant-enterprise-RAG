@@ -80,9 +80,7 @@ class Chunk(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
 
     # pgvector column — dimension must match EMBEDDING_DIM
-    embedding: Mapped[list[float]] = mapped_column(
-        Vector(EMBEDDING_DIM), nullable=True
-    )
+    embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
 
     # PostgreSQL automatically generates and stores this column.
     # Python application must never insert or update its value.
@@ -102,7 +100,7 @@ class Chunk(Base):
     created_at: Mapped[datetime] = timestamp_now()
 
     # Relationships
-    document: Mapped["Document"] = relationship(
+    document: Mapped["Document"] = relationship(  # noqa: F821
         back_populates="chunks",
         foreign_keys="[Chunk.tenant_id, Chunk.document_id]",
     )

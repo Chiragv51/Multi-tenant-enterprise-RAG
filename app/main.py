@@ -9,6 +9,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.v1.health import router as health_router
 from app.core.config import get_settings
+from app.db.session import close_db
 
 settings = get_settings()
 
@@ -18,6 +19,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Startup actions (e.g., connection pools) can be initialized here
     yield
     # Shutdown actions clean up here
+    await close_db()
 
 
 app = FastAPI(
