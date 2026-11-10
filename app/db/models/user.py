@@ -41,5 +41,6 @@ class User(Base):
     # Relationships
     tenant: Mapped["Tenant"] = relationship(back_populates="users")  # noqa: F821
     group_memberships: Mapped[list["UserGroup"]] = relationship(  # noqa: F821
-        back_populates="user"
+        back_populates="user",
+        overlaps="members",
     )

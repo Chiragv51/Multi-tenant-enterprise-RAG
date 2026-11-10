@@ -9,16 +9,15 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+from app.core.config import get_settings
+
 # ---------------------------------------------------------------------------
 # Alembic Config object (gives access to alembic.ini values)
 # ---------------------------------------------------------------------------
 config = context.config
 
 # Inject DATABASE_URL from environment so the ini file never contains creds.
-_db_url = os.environ.get(
-    "DATABASE_URL",
-    "postgresql+asyncpg://rag_user:rag_secure_password@localhost:5432/rag_enterprise_db",
-)
+_db_url = os.environ.get("DATABASE_URL") or get_settings().DATABASE_URL
 # Alembic 1.x: set the url programmatically
 config.set_main_option("sqlalchemy.url", _db_url)
 

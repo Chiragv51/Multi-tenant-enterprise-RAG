@@ -42,6 +42,10 @@ class UserGroup(Base):
 
     # Relationships
     user: Mapped["User"] = relationship(  # noqa: F821
-        back_populates="group_memberships"
+        back_populates="group_memberships",
+        overlaps="members",
     )
-    group: Mapped["Group"] = relationship(back_populates="members")  # noqa: F821
+    group: Mapped["Group"] = relationship(  # noqa: F821
+        back_populates="members",
+        overlaps="group_memberships,user",
+    )

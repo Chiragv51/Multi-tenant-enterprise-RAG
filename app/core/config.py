@@ -25,6 +25,15 @@ class Settings(BaseSettings):
     DATABASE_URL: str = (
         "postgresql+asyncpg://rag_user:rag_secure_password@localhost:5433/rag_enterprise_db"
     )
+    POSTGRES_APP_USER: str = "rag_app"
+    POSTGRES_APP_PASSWORD: str = "rag_app_password"
+
+    @property
+    def APP_DATABASE_URL(self) -> str:
+        return (
+            f"postgresql+asyncpg://{self.POSTGRES_APP_USER}:{self.POSTGRES_APP_PASSWORD}@"
+            f"{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+        )
 
     # Redis
     REDIS_HOST: str = "localhost"
