@@ -49,6 +49,28 @@ jobs:
           python -m pip install --upgrade pip
           pip install .[dev]
 
-      - name: Run Pytest
-        run: pytest -v
+      - name: Run Pytest (unit tests only, exclude migration tests)
+        run: pytest -v --ignore=tests/test_migrations.py
 
+  migration-check:
+    name: Migration Smoke Test (upgrade → downgrade → upgrade)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install .[dev]
+
+      - name: Run Migration Smoke Test
+        # Docker daemon is available on ubuntu-latest (GitHub-hosted runners).
+        # testcontainers pulls pgvector/pgvector:pg16 and spins it up for the test.
+        run: pytest -v tests/test_migrations.py

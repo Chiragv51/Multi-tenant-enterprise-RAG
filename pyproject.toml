@@ -38,6 +38,8 @@ dev = [
     "ruff>=0.3.4",
     "black>=24.3.0",
     "pre-commit>=3.7.0",
+    # T2: migration smoke-tests run against a real Postgres container
+    "testcontainers[postgres]>=4.8.0",
 ]
 
 [tool.ruff]
