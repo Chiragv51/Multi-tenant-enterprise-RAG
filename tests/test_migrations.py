@@ -12,7 +12,11 @@ import subprocess
 import sys
 
 import pytest
-from testcontainers.postgres import PostgresContainer
+
+try:
+    from testcontainers.community.postgres import PostgresContainer
+except ImportError:
+    from testcontainers.postgres import PostgresContainer
 
 POSTGRES_IMAGE = "pgvector/pgvector:pg16"
 

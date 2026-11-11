@@ -34,6 +34,32 @@ jobs:
   test:
     name: Automated Tests
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: rag_user
+          POSTGRES_PASSWORD: rag_secure_password
+          POSTGRES_DB: rag_enterprise_db
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U rag_user -d rag_enterprise_db"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: 5433
+      POSTGRES_USER: rag_user
+      POSTGRES_PASSWORD: rag_secure_password
+      POSTGRES_DB: rag_enterprise_db
+      DATABASE_URL: postgresql+asyncpg://rag_user:rag_secure_password@localhost:5433/rag_enterprise_db
+      POSTGRES_APP_USER: rag_app
+      POSTGRES_APP_PASSWORD: rag_app_password
+      APP_DATABASE_URL: postgresql+asyncpg://rag_app:rag_app_password@localhost:5433/rag_enterprise_db
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -49,7 +75,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install .[dev]
 
-      - name: Run Pytest (unit tests only, exclude migration tests)
+      - name: Setup Database (Migrations, Roles, Seed)
+        run: |
+          alembic upgrade head
+          python infra/postgres/apply_roles.py
+          python -m app.db.seed
+
+      - name: Run Pytest
         run: pytest -v --ignore=tests/test_migrations.py
 
   migration-check:
