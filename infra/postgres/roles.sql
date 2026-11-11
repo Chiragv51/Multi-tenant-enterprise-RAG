@@ -5,13 +5,12 @@
 -- 1. rag_user: Migration / Schema Owner (executes DDL, owns tables)
 -- 2. rag_app:  Application Runtime Role (NOSUPERUSER, NOBYPASSRLS, cannot alter tables or bypass RLS)
 
--- Create application role if it does not already exist
+-- Create application role if it does not already exist (password set parameterized via apply_roles.py)
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'rag_app') THEN
         CREATE ROLE rag_app WITH
             LOGIN
-            PASSWORD 'rag_app_password'
             NOSUPERUSER
             NOCREATEDB
             NOCREATEROLE
@@ -46,4 +45,3 @@ ALTER DEFAULT PRIVILEGES FOR ROLE rag_user IN SCHEMA public
 
 ALTER DEFAULT PRIVILEGES FOR ROLE rag_user IN SCHEMA public
     GRANT USAGE, SELECT ON SEQUENCES TO rag_app;
-

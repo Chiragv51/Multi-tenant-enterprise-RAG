@@ -36,6 +36,7 @@ class User(Base):
     role: Mapped[str] = mapped_column(
         String(64), nullable=False, server_default="employee"
     )
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = timestamp_now()
 
     # Relationships

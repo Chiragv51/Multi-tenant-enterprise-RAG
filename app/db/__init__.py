@@ -4,8 +4,8 @@ from app.db.session import (
     AsyncSessionLocal,
     close_db,
     engine,
+    get_current_tenant_db,
     get_db,
-    get_tenant_db,
     set_tenant_context,
 )
 
@@ -13,7 +13,7 @@ __all__ = [
     "engine",
     "AsyncSessionLocal",
     "get_db",
-    "get_tenant_db",
+    "get_current_tenant_db",
     "set_tenant_context",
     "close_db",
 ]

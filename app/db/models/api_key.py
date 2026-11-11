@@ -2,13 +2,13 @@
 
 AGENTS.md §3: keys are stored hashed (SHA-256), never in plaintext.
 The plain key is shown to the user exactly once at creation time and
-never stored (T3 will implement the generation + hashing logic).
+never stored.
 """
 
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, String, text
+from sqlalchemy import DateTime, ForeignKey, String, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -29,6 +29,10 @@ class APIKey(Base):
         nullable=False,
         index=True,
     )
+    name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # SHA-256 hex digest of the raw API key — 64 chars
     key_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     created_at: Mapped[datetime] = timestamp_now()
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

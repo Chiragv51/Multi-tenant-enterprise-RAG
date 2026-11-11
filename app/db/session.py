@@ -3,6 +3,7 @@
 import uuid
 from collections.abc import AsyncGenerator
 
+from fastapi import HTTPException, Request, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.core.config import get_settings
+from app.core.tenant import TenantContext
 
 settings = get_settings()
 
@@ -66,17 +68,28 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         yield session
 
 
-async def get_tenant_db(
-    tenant_id: uuid.UUID | str,
+async def get_current_tenant_db(
+    request: Request,
 ) -> AsyncGenerator[AsyncSession, None]:
-    """Provide an async database session with verified tenant context applied.
+    """Provide a request-scoped async DB session with verified PostgreSQL RLS tenant context.
 
-    The tenant_id MUST be verified by authentication middleware or JWT verification
-    before being passed to this dependency.
+    Obtains TenantContext strictly from verified authentication (request.state.tenant_context).
+    Opens an async session, begins a transaction, sets transaction-local app.tenant_id,
+    and commits on successful completion or rolls back on exception.
     """
+    tenant_context: TenantContext | None = getattr(
+        request.state, "tenant_context", None
+    )
+    if not tenant_context:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Authenticated tenant context is missing from request.",
+        )
+
     async with AsyncSessionLocal() as session:
-        await set_tenant_context(session, tenant_id)
-        yield session
+        async with session.begin():
+            await set_tenant_context(session, tenant_context.tenant_id)
+            yield session
 
 
 async def close_db() -> None:
