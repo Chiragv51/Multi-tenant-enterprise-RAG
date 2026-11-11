@@ -14,6 +14,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import bcrypt
 import jwt
 
 from app.core.config import get_settings
@@ -22,6 +23,47 @@ logger = logging.getLogger("security")
 
 # Permitted RBAC roles across the multi-tenant platform
 VALID_ROLES: frozenset[str] = frozenset({"tenant_admin", "employee", "platform_admin"})
+
+
+def get_password_hash(password: str) -> str:
+    """Hash a plaintext password using bcrypt with a random salt."""
+    if not password:
+        raise ValueError("Password cannot be empty.")
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(password.encode("utf-8"), salt).decode("utf-8")
+
+
+def verify_password(plain_password: str, hashed_password: str | None) -> bool:
+    """Verify a plaintext password against a stored bcrypt hash.
+
+    Returns False if hashed_password is None, empty, or verification fails.
+    Uses constant-time comparison in bcrypt to prevent timing attacks.
+    """
+    if not plain_password or not hashed_password:
+        return False
+    try:
+        return bcrypt.checkpw(
+            plain_password.encode("utf-8"),
+            hashed_password.encode("utf-8"),
+        )
+    except Exception:
+        return False
+
+
+def map_db_role_to_jwt_role(db_role: str) -> str:
+    """Map granular database role to coarse-grained JWT platform role.
+
+    Explicit coarse-grained mapping:
+    - tenant 'admin' -> 'tenant_admin'
+    - other tenant-specific roles ('clinician', 'nurse', 'staff', 'auditor', etc.) -> 'employee'
+    - 'platform_admin' is reserved for explicitly provisioned platform administrators.
+    """
+    clean_role = (db_role or "").strip().lower()
+    if clean_role == "platform_admin":
+        return "platform_admin"
+    if clean_role == "admin":
+        return "tenant_admin"
+    return "employee"
 
 
 class AuthError(Exception):

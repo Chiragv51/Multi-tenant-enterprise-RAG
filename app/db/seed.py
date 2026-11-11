@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.core.config import get_settings
+from app.core.security import get_password_hash
 from app.db.models import (
     Chunk,
     Document,
@@ -227,15 +228,23 @@ async def seed_tenant(session: AsyncSession, data: dict) -> Tenant:
         )
         res = await session.execute(stmt)
         user = res.scalar_one_or_none()
+        expected_pw = (
+            "TenantAdminPass123!" if u_data["role"] == "admin" else "EmployeePass123!"
+        )
         if not user:
             user = User(
                 tenant_id=tenant.id,
                 email=u_data["email"],
                 role=u_data["role"],
+                password_hash=get_password_hash(expected_pw),
             )
             session.add(user)
             await session.flush()
             logger.info("  Created user '%s' (%s)", user.email, user.role)
+        elif user.password_hash is None:
+            user.password_hash = get_password_hash(expected_pw)
+            await session.flush()
+            logger.info("  Updated password hash for user '%s'", user.email)
 
         # Memberships
         for g_name in u_data["groups"]:
