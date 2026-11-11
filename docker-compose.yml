@@ -4,16 +4,17 @@ services:
     container_name: rag_postgres
     restart: unless-stopped
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5433:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-rag_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rag_secure_password}
       POSTGRES_DB: ${POSTGRES_DB:-rag_enterprise_db}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+      - ./infra/postgres/roles.sql:/docker-entrypoint-initdb.d/02_roles.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rag_user} -d ${POSTGRES_DB:-rag_enterprise_db}"]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rag_user} -d ${POSTGRES_DB:-rag_enterprise_db}" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -27,13 +28,13 @@ services:
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 3s
       retries: 5
 
   minio:
-    image: minio/minio:latest
+    image: quay.io/minio/minio:latest
     container_name: rag_minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
@@ -46,7 +47,7 @@ services:
     volumes:
       - minio_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
+      test: [ "CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -68,6 +69,9 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-rag_secure_password}
       - POSTGRES_DB=${POSTGRES_DB:-rag_enterprise_db}
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-rag_user}:${POSTGRES_PASSWORD:-rag_secure_password}@postgres:5432/${POSTGRES_DB:-rag_enterprise_db}
+      - POSTGRES_APP_USER=${POSTGRES_APP_USER:-rag_app}
+      - POSTGRES_APP_PASSWORD=${POSTGRES_APP_PASSWORD:-rag_app_password}
+      - APP_DATABASE_URL=postgresql+asyncpg://${POSTGRES_APP_USER:-rag_app}:${POSTGRES_APP_PASSWORD:-rag_app_password}@postgres:5432/${POSTGRES_DB:-rag_enterprise_db}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_URL=redis://redis:6379/0

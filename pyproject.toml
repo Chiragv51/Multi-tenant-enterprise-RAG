@@ -38,6 +38,8 @@ dev = [
     "ruff>=0.3.4",
     "black>=24.3.0",
     "pre-commit>=3.7.0",
+    # T2: migration smoke-tests run against a real Postgres container
+    "testcontainers[postgres]>=4.8.0",
 ]
 
 [tool.ruff]
@@ -55,6 +57,7 @@ target-version = ["py311"]
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
+pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 python_files = ["test_*.py"]
