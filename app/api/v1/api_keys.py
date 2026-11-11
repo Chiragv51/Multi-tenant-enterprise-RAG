@@ -12,7 +12,7 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,7 +39,7 @@ def require_tenant_admin(request: Request) -> TenantContext:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="API keys cannot perform API key management operations.",
         )
-    if ctx.role not in ("tenant_admin", "platform_admin"):
+    if ctx.role != "tenant_admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Tenant administrator authorization required.",
@@ -54,6 +54,16 @@ class CreateAPIKeyRequest(BaseModel):
         max_length=255,
         description="Descriptive name or label for the API key",
     )
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        trimmed = v.strip()
+        if not trimmed:
+            raise ValueError("API key name cannot be empty or whitespace-only.")
+        if len(trimmed) > 255:
+            raise ValueError("API key name must not exceed 255 characters.")
+        return trimmed
 
 
 class CreateAPIKeyResponse(BaseModel):
@@ -99,7 +109,7 @@ async def create_tenant_api_key(
 
     api_key = APIKey(
         tenant_id=ctx.tenant_id,
-        name=body.name.strip(),
+        name=body.name,
         key_hash=key_hash,
     )
     session.add(api_key)

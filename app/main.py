@@ -1,3 +1,4 @@
+import re
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -53,15 +54,6 @@ app = FastAPI(
 
 
 @app.middleware("http")
-async def request_id_middleware(request: Request, call_next):
-    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
-    request.state.request_id = request_id
-    response = await call_next(request)
-    response.headers["X-Request-ID"] = request_id
-    return response
-
-
-@app.middleware("http")
 async def tenant_auth_middleware(request: Request, call_next):
     """Authenticate protected routes using Bearer JWT or API key and attach TenantContext.
 
@@ -85,7 +77,7 @@ async def tenant_auth_middleware(request: Request, call_next):
     if not has_match:
         return await call_next(request)
 
-    request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
+    request_id = getattr(request.state, "request_id", None) or str(uuid.uuid4())
     auth_header = request.headers.get("Authorization")
     api_key_header = request.headers.get("X-API-Key")
 
@@ -209,11 +201,39 @@ async def tenant_auth_middleware(request: Request, call_next):
     return await call_next(request)
 
 
+SAFE_REQUEST_ID_REGEX = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+
+
+def sanitize_request_id(raw_id: str | None) -> str:
+    """Validate and sanitize a request ID against safe allowlist [A-Za-z0-9._-].
+
+    Rejects CR, LF, control characters, whitespace-only values, and values over 128 chars.
+    Generates a secure UUIDv4 when the supplied header is missing or malformed.
+    """
+    if raw_id:
+        trimmed = raw_id.strip()
+        if SAFE_REQUEST_ID_REGEX.match(trimmed):
+            return trimmed
+    return str(uuid.uuid4())
+
+
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    """Outermost middleware: capture/generate request_id and attach to response header."""
+    request_id = sanitize_request_id(request.headers.get("X-Request-ID"))
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(
     request: Request, exc: StarletteHTTPException
 ) -> JSONResponse:
-    request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
+    request_id = getattr(request.state, "request_id", None) or sanitize_request_id(
+        request.headers.get("X-Request-ID")
+    )
     return JSONResponse(
         status_code=exc.status_code,
         headers={"X-Request-ID": request_id},
@@ -231,14 +251,29 @@ async def http_exception_handler(
 async def validation_exception_handler(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
-    request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
+    request_id = getattr(request.state, "request_id", None) or sanitize_request_id(
+        request.headers.get("X-Request-ID")
+    )
+
+    # Sanitize validation errors: expose field locations and messages, but NEVER raw inputs
+    messages: list[str] = []
+    for err in exc.errors():
+        loc_parts = [str(part) for part in err.get("loc", []) if part != "body"]
+        loc_str = ".".join(loc_parts) if loc_parts else "request"
+        msg = err.get("msg", "Invalid value")
+        messages.append(f"{loc_str}: {msg}")
+
+    sanitized_message = (
+        "; ".join(messages) if messages else "Request validation failed."
+    )
+
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         headers={"X-Request-ID": request_id},
         content={
             "error": {
                 "code": "VALIDATION_ERROR",
-                "message": str(exc.errors()),
+                "message": sanitized_message,
                 "request_id": request_id,
             }
         },

@@ -4,7 +4,9 @@ Implements POST /v1/auth/token:
 - Resolves tenant identifier (name or UUID) strictly as a hint.
 - Scopes DB session to that tenant using set_tenant_context().
 - Authenticates user against stored bcrypt password hash.
-- Enforces that users without a password hash cannot authenticate.
+- Offloads CPU-bound bcrypt verification to threadpool to avoid blocking event loop.
+- Uses a precomputed dummy hash on missing tenant/user to prevent timing-based enumeration.
+- Enforces bcrypt 72 UTF-8 byte limit on passwords.
 - Extracts DB-verified claims: tenant_id, user_id, role (mapped to coarse JWT role), and groups.
 - Issues signed Bearer JWT token.
 """
@@ -15,12 +17,14 @@ import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
 from app.core.config import get_settings
 from app.core.security import (
+    MAX_BCRYPT_PASSWORD_BYTES,
     create_access_token,
     map_db_role_to_jwt_role,
     verify_password,
@@ -31,6 +35,9 @@ from app.db.session import get_db, set_tenant_context
 logger = logging.getLogger("auth")
 
 router = APIRouter(tags=["Authentication"])
+
+# Precomputed dummy bcrypt hash (cost factor 12) for constant-time failure path
+DUMMY_BCRYPT_HASH = "$2b$12$e8Y7X4Q9wGfZlT6sM7nQ5.3K7HjHj8p3d5x9a2b1c4e7f8g9h0i1j"
 
 
 class TokenRequest(BaseModel):
@@ -43,6 +50,18 @@ class TokenRequest(BaseModel):
     )
     email: EmailStr = Field(..., description="User's email address.")
     password: str = Field(..., description="User's plain password.", min_length=1)
+
+    @field_validator("password")
+    @classmethod
+    def validate_password_byte_length(cls, v: str) -> str:
+        """Enforce bcrypt 72-byte limit on UTF-8 encoded byte length."""
+        if not v:
+            raise ValueError("Password cannot be empty.")
+        if len(v.encode("utf-8")) > MAX_BCRYPT_PASSWORD_BYTES:
+            raise ValueError(
+                f"Password must not exceed {MAX_BCRYPT_PASSWORD_BYTES} UTF-8 bytes."
+            )
+        return v
 
 
 class TokenResponse(BaseModel):
@@ -78,7 +97,10 @@ async def login_for_access_token(
     tenant = res.scalar_one_or_none()
 
     if not tenant:
-        # Uniform 401 response to prevent tenant enumeration
+        # Offload dummy verification in threadpool to prevent timing-based enumeration
+        await run_in_threadpool(
+            verify_password, credentials.password, DUMMY_BCRYPT_HASH
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid tenant, email, or password.",
@@ -98,13 +120,19 @@ async def login_for_access_token(
 
     # Reject if user does not exist or has no password hash
     if not user or not user.password_hash:
+        await run_in_threadpool(
+            verify_password, credentials.password, DUMMY_BCRYPT_HASH
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid tenant, email, or password.",
         )
 
-    # 4. Verify password hash using constant-time bcrypt verification
-    if not verify_password(credentials.password, user.password_hash):
+    # 4. Verify password hash using threadpool-offloaded bcrypt verification
+    password_valid = await run_in_threadpool(
+        verify_password, credentials.password, user.password_hash
+    )
+    if not password_valid:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid tenant, email, or password.",

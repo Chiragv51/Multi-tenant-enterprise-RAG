@@ -68,19 +68,6 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         yield session
 
 
-async def get_tenant_db(
-    tenant_id: uuid.UUID | str,
-) -> AsyncGenerator[AsyncSession, None]:
-    """Provide an async database session with verified tenant context applied.
-
-    The tenant_id MUST be verified by authentication middleware or JWT verification
-    before being passed to this dependency.
-    """
-    async with AsyncSessionLocal() as session:
-        await set_tenant_context(session, tenant_id)
-        yield session
-
-
 async def get_current_tenant_db(
     request: Request,
 ) -> AsyncGenerator[AsyncSession, None]:

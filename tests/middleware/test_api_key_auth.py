@@ -105,12 +105,17 @@ async def test_invalid_api_key_rejected(
 @pytest.mark.asyncio
 async def test_malformed_api_key_rejected() -> None:
     """Malformed API key headers must be rejected with HTTP 401."""
+    test_uid = uuid.uuid4()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         for malformed in [
             "invalid_prefix_12345",
             "rag_key_not-a-uuid_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-            f"rag_key_{uuid.uuid4()}_short",
+            f"rag_key_{test_uid}_short",
+            f"rag_key_{test_uid}_{'a' * 63}",  # truncated
+            f"rag_key_{test_uid}_{'a' * 65}",  # extended
+            f"rag_key_{test_uid}_{'A' * 64}",  # uppercase hex
+            f"rag_key_{test_uid}_{'g' * 64}",  # non-hex
             "Bearer token",
         ]:
             res = await client.get("/v1/me", headers={"X-API-Key": malformed})

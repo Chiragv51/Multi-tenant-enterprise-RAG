@@ -2,8 +2,11 @@
 
 Used during local setup, Docker initialization, and CI pipeline setup.
 Connects as the privileged schema owner (rag_user) to create the application
-runtime role (rag_app) and grant necessary DML privileges.
+runtime role (rag_app), grant necessary DML privileges, and securely set
+its password using safe psycopg2.sql Identifier and Literal composition without embedding secrets in SQL.
 """
+
+from __future__ import annotations
 
 import logging
 import sys
@@ -15,6 +18,7 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 import psycopg2  # noqa: E402
+from psycopg2 import sql  # noqa: E402
 
 from app.core.config import get_settings  # noqa: E402
 
@@ -46,10 +50,31 @@ def apply_roles() -> None:
     conn.autocommit = True
     try:
         with open(roles_sql_path, encoding="utf-8") as f:
-            sql = f.read()
+            sql_script = f.read()
+
+        # Verify role consistency with infrastructure definition
+        if settings.POSTGRES_APP_USER != "rag_app":
+            raise ValueError(
+                f"Configured POSTGRES_APP_USER '{settings.POSTGRES_APP_USER}' does not match "
+                f"the 'rag_app' role defined in roles.sql."
+            )
+
         with conn.cursor() as cur:
-            cur.execute(sql)
-        logger.info("Database roles and permissions applied successfully.")
+            # 1. Execute role creation and DML permission grants
+            cur.execute(sql_script)
+
+            # 2. Set runtime role password safely using psycopg2.sql Identifier and Literal composition
+            alter_role_stmt = sql.SQL(
+                "ALTER ROLE {role} WITH PASSWORD {password}"
+            ).format(
+                role=sql.Identifier(settings.POSTGRES_APP_USER),
+                password=sql.Literal(settings.POSTGRES_APP_PASSWORD),
+            )
+            cur.execute(alter_role_stmt)
+
+        logger.info(
+            "Database roles, privileges, and runtime credentials applied successfully."
+        )
     finally:
         conn.close()
 

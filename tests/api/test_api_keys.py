@@ -80,6 +80,18 @@ def admin_token_tenant_b(tenant_ids: tuple[uuid.UUID, uuid.UUID]) -> str:
     )
 
 
+@pytest.fixture
+def platform_admin_token(tenant_ids: tuple[uuid.UUID, uuid.UUID]) -> str:
+    """JWT token for platform_admin attempting tenant operations."""
+    tenant_a, _ = tenant_ids
+    return create_access_token(
+        user_id=uuid.uuid4(),
+        tenant_id=tenant_a,
+        role="platform_admin",
+        groups=["Superusers"],
+    )
+
+
 @pytest.mark.asyncio
 async def test_create_api_key_stores_hash_and_returns_plaintext_once(
     tenant_ids: tuple[uuid.UUID, uuid.UUID],
@@ -123,6 +135,25 @@ async def test_create_api_key_stores_hash_and_returns_plaintext_once(
                 rec = await session.get(APIKey, created_id)
                 if rec:
                     await session.delete(rec)
+
+
+@pytest.mark.asyncio
+async def test_create_api_key_whitespace_name_rejected(
+    admin_token_tenant_a: str,
+) -> None:
+    """Creating an API key with empty or whitespace-only name must return HTTP 422."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        for bad_name in ["   ", "\t", "\n", ""]:
+            res = await client.post(
+                "/v1/api-keys",
+                headers={"Authorization": f"Bearer {admin_token_tenant_a}"},
+                json={"name": bad_name},
+            )
+            assert res.status_code == 422
+            data = res.json()
+            assert data["error"]["code"] == "VALIDATION_ERROR"
+            assert "name" in data["error"]["message"].lower()
 
 
 @pytest.mark.asyncio
@@ -263,9 +294,11 @@ async def test_delete_api_key(
 @pytest.mark.asyncio
 async def test_api_key_management_rbac_permissions(
     tenant_ids: tuple[uuid.UUID, uuid.UUID],
+    admin_token_tenant_a: str,
     employee_token_tenant_a: str,
+    platform_admin_token: str,
 ) -> None:
-    """Employees and service API keys must be forbidden from managing API keys (HTTP 403)."""
+    """Employees, platform admins, and service API keys must be forbidden from managing API keys (HTTP 403)."""
     tenant_a, _ = tenant_ids
     raw_key, key_hash = generate_api_key(tenant_a)
 
@@ -284,7 +317,14 @@ async def test_api_key_management_rbac_permissions(
     try:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            # 1. Employee cannot create key
+            # 1. Tenant admin is allowed
+            res_admin = await client.get(
+                "/v1/api-keys",
+                headers={"Authorization": f"Bearer {admin_token_tenant_a}"},
+            )
+            assert res_admin.status_code == 200
+
+            # 2. Employee cannot create key (HTTP 403)
             res1 = await client.post(
                 "/v1/api-keys",
                 headers={"Authorization": f"Bearer {employee_token_tenant_a}"},
@@ -292,7 +332,15 @@ async def test_api_key_management_rbac_permissions(
             )
             assert res1.status_code == 403
 
-            # 2. Machine API Key cannot manage API keys
+            # 3. Platform admin cannot manage tenant API keys (HTTP 403)
+            res_plat = await client.post(
+                "/v1/api-keys",
+                headers={"Authorization": f"Bearer {platform_admin_token}"},
+                json={"name": "Platform Key"},
+            )
+            assert res_plat.status_code == 403
+
+            # 4. Machine API Key cannot manage API keys (HTTP 403)
             res2 = await client.post(
                 "/v1/api-keys",
                 headers={"X-API-Key": raw_key},
@@ -300,12 +348,16 @@ async def test_api_key_management_rbac_permissions(
             )
             assert res2.status_code == 403
 
-            # 3. Machine API Key cannot list API keys
+            # 5. Machine API Key cannot list API keys (HTTP 403)
             res3 = await client.get(
                 "/v1/api-keys",
                 headers={"X-API-Key": raw_key},
             )
             assert res3.status_code == 403
+
+            # 6. Unauthenticated request returns HTTP 401
+            res_unauth = await client.get("/v1/api-keys")
+            assert res_unauth.status_code == 401
     finally:
         async with AsyncSessionLocal() as session:
             async with session.begin():

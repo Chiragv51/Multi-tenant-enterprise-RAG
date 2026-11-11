@@ -1,15 +1,19 @@
 """tests/api/test_auth.py — Authentication endpoint (POST /v1/auth/token) tests.
 
-Tests:
+Ticket T3 Hardening:
 1. Valid credentials for CityCare admin return a valid JWT.
-2. Verified claims contain DB-retrieved tenant_id, user_id, role, groups, exp.
+2. Verified claims contain DB-retrieved tenant_id, user_id, role, groups, exp, iat.
 3. Wrong password is rejected with HTTP 401.
 4. Unknown tenant is rejected with HTTP 401.
 5. Unknown user is rejected with HTTP 401.
 6. Cross-tenant spoofing: User from Tenant A cannot authenticate under Tenant B's identifier (HTTP 401).
 7. User without a password hash cannot authenticate (HTTP 401).
-8. Password and sensitive data are never logged or leaked.
+8. Password byte limits: passwords exceeding 72 UTF-8 bytes are rejected (HTTP 422).
+9. Multibyte passwords exceeding 72 UTF-8 bytes are rejected (HTTP 422).
+10. Constant-time mitigation: uniform error messages across unknown tenant, unknown user, and bad password.
 """
+
+from __future__ import annotations
 
 import uuid
 
@@ -196,3 +200,126 @@ async def test_user_without_password_hash_cannot_authenticate() -> None:
         assert response.status_code == 401
         data = response.json()
         assert "error" in data
+
+
+@pytest.mark.asyncio
+async def test_login_password_exceeding_72_bytes_rejected(
+    seeded_citycare_credentials: dict[str, str],
+) -> None:
+    """Password exceeding 72 UTF-8 bytes must return 422 validation error."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/v1/auth/token",
+            json={
+                "tenant": seeded_citycare_credentials["tenant_name"],
+                "email": seeded_citycare_credentials["email"],
+                "password": "A" * 73,
+            },
+        )
+        assert response.status_code == 422
+        data = response.json()
+        assert data["error"]["code"] == "VALIDATION_ERROR"
+        assert "72" in str(data["error"]["message"])
+
+
+@pytest.mark.asyncio
+async def test_login_multibyte_password_exceeding_72_bytes_rejected(
+    seeded_citycare_credentials: dict[str, str],
+) -> None:
+    """Multibyte Unicode password exceeding 72 UTF-8 bytes must return 422."""
+    # '€' is 3 bytes in UTF-8; 25 chars = 75 bytes
+    too_many_bytes = "€" * 25
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/v1/auth/token",
+            json={
+                "tenant": seeded_citycare_credentials["tenant_name"],
+                "email": seeded_citycare_credentials["email"],
+                "password": too_many_bytes,
+            },
+        )
+        assert response.status_code == 422
+        data = response.json()
+        assert data["error"]["code"] == "VALIDATION_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_login_uniform_error_message_across_scenarios(
+    seeded_citycare_credentials: dict[str, str],
+) -> None:
+    """Unknown tenant, unknown user, and wrong password must return identical generic error messages."""
+    scenarios = [
+        # 1. Unknown tenant
+        {
+            "tenant": "GhostTenant",
+            "email": "admin@citycare.org",
+            "password": "Pass123!",
+        },
+        # 2. Unknown user in valid tenant
+        {
+            "tenant": seeded_citycare_credentials["tenant_name"],
+            "email": "nonexistent@citycare.org",
+            "password": "Pass123!",
+        },
+        # 3. Wrong password for valid user
+        {
+            "tenant": seeded_citycare_credentials["tenant_name"],
+            "email": seeded_citycare_credentials["email"],
+            "password": "WrongPassword!",
+        },
+    ]
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        for payload in scenarios:
+            response = await client.post("/v1/auth/token", json=payload)
+            assert response.status_code == 401
+            data = response.json()
+            assert data["error"]["message"] == "Invalid tenant, email, or password."
+
+
+@pytest.mark.asyncio
+async def test_validation_error_scrubs_raw_sensitive_inputs() -> None:
+    """Validation errors must never echo raw submitted passwords, tokens, or sensitive inputs."""
+    distinctive_secret_password = "SUPER_SECRET_PLAINTEXT_PASSWORD_VALUE_12345" * 3
+    custom_req_id = "test-val-req-" + uuid.uuid4().hex
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/v1/auth/token",
+            headers={"X-Request-ID": custom_req_id},
+            json={
+                "tenant": "SomeTenant",
+                "email": "admin@example.com",
+                "password": distinctive_secret_password,
+            },
+        )
+        assert response.status_code == 422
+        data = response.json()
+        assert data["error"]["code"] == "VALIDATION_ERROR"
+        assert data["error"]["request_id"] == custom_req_id
+        assert response.headers["X-Request-ID"] == custom_req_id
+        # Crucial security check: sensitive input MUST NOT be present in body or text
+        assert distinctive_secret_password not in response.text
+        assert "SUPER_SECRET" not in str(data)
+
+
+@pytest.mark.asyncio
+async def test_validation_error_malformed_sensitive_input_not_echoed() -> None:
+    """Malformed non-string sensitive values are not echoed in validation responses."""
+    sensitive_dict = {"secret_key": "raw_sensitive_token_content_here"}
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/v1/auth/token",
+            json={
+                "tenant": "SomeTenant",
+                "email": "not-an-email",
+                "password": sensitive_dict,
+            },
+        )
+        assert response.status_code == 422
+        assert "raw_sensitive_token_content_here" not in response.text
+        assert response.json()["error"]["code"] == "VALIDATION_ERROR"
