@@ -28,6 +28,9 @@ from app.core.security import (
     VALID_ROLES,
     AuthError,
     create_access_token,
+    extract_tenant_id_from_api_key,
+    generate_api_key,
+    hash_api_key,
     verify_access_token,
 )
 
@@ -406,3 +409,62 @@ def test_verify_token_invalid_groups_structure() -> None:
 
         assert "groups" in str(exc_info.value).lower()
         assert token not in str(exc_info.value)
+
+
+# ==============================================================================
+# 5. API Key Security & Cryptographic Unit Tests (Ticket T3c)
+# ==============================================================================
+
+
+def test_generate_api_key_format_and_entropy() -> None:
+    """generate_api_key must generate unique keys with prefix, tenant ID, and 256 bits entropy."""
+    tenant_id = uuid.uuid4()
+    raw_key, key_hash = generate_api_key(tenant_id)
+
+    assert raw_key.startswith("rag_key_")
+    assert str(tenant_id) in raw_key
+    assert len(key_hash) == 64
+    assert all(c in "0123456789abcdef" for c in key_hash)
+
+    # Key uniqueness
+    raw_key_2, key_hash_2 = generate_api_key(tenant_id)
+    assert raw_key != raw_key_2
+    assert key_hash != key_hash_2
+
+
+def test_extract_tenant_id_from_api_key_valid() -> None:
+    """extract_tenant_id_from_api_key must extract valid UUID from standard formatted key."""
+    tenant_id = uuid.uuid4()
+    raw_key, _ = generate_api_key(tenant_id)
+
+    extracted = extract_tenant_id_from_api_key(raw_key)
+    assert extracted == tenant_id
+
+
+def test_extract_tenant_id_from_api_key_invalid_cases() -> None:
+    """extract_tenant_id_from_api_key must return None for malformed or tampered keys."""
+    valid_uuid = uuid.uuid4()
+    invalid_samples = [
+        "",
+        "not_a_key",
+        "Bearer some_token",
+        f"other_key_{valid_uuid}_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "rag_key_not-a-uuid_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        f"rag_key_{valid_uuid}_short",
+        f"rag_key_{valid_uuid}",
+        f"rag_key_{valid_uuid}_secret_extra_part",
+    ]
+    for sample in invalid_samples:
+        assert extract_tenant_id_from_api_key(sample) is None
+
+
+def test_hash_api_key_deterministic_and_safe() -> None:
+    """hash_api_key must produce deterministic SHA-256 hex digest."""
+    key = "rag_key_12345678-1234-5678-1234-567812345678_abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+    h1 = hash_api_key(key)
+    h2 = hash_api_key(key)
+    assert h1 == h2
+    assert len(h1) == 64
+
+    with pytest.raises(ValueError):
+        hash_api_key("")

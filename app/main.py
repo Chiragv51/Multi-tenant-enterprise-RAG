@@ -5,15 +5,23 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy import select
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.routing import Match
 
+from app.api.v1.api_keys import router as api_keys_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.health import router as health_router
 from app.core.config import get_settings
-from app.core.security import AuthError, verify_access_token
+from app.core.security import (
+    AuthError,
+    extract_tenant_id_from_api_key,
+    hash_api_key,
+    verify_access_token,
+)
 from app.core.tenant import TenantContext
-from app.db.session import close_db
+from app.db.models import APIKey
+from app.db.session import AsyncSessionLocal, close_db, set_tenant_context
 
 settings = get_settings()
 
@@ -55,11 +63,11 @@ async def request_id_middleware(request: Request, call_next):
 
 @app.middleware("http")
 async def tenant_auth_middleware(request: Request, call_next):
-    """Authenticate protected routes using Bearer JWT and attach TenantContext.
+    """Authenticate protected routes using Bearer JWT or API key and attach TenantContext.
 
     Public routes (/health, /v1/health, /v1/auth/token) bypass authentication.
     Non-existent routes pass through to router for standard 404 handling.
-    All other application routes strictly enforce a valid Bearer JWT.
+    All other application routes strictly enforce authentication.
     """
     path = request.url.path.rstrip("/") or "/"
     if path in PUBLIC_PATHS:
@@ -79,43 +87,125 @@ async def tenant_auth_middleware(request: Request, call_next):
 
     request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
     auth_header = request.headers.get("Authorization")
-    if not auth_header or not auth_header.startswith("Bearer "):
+    api_key_header = request.headers.get("X-API-Key")
+
+    # 1. Reject conflicting credentials
+    if auth_header and api_key_header:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            headers={"X-Request-ID": request_id},
+            content={
+                "error": {
+                    "code": "BAD_REQUEST",
+                    "message": "Conflicting authentication credentials: both Authorization and X-API-Key provided.",
+                    "request_id": request_id,
+                }
+            },
+        )
+
+    # 2. Reject missing credentials
+    if not auth_header and not api_key_header:
         return JSONResponse(
             status_code=status.HTTP_401_UNAUTHORIZED,
             headers={"X-Request-ID": request_id},
             content={
                 "error": {
                     "code": "UNAUTHORIZED",
-                    "message": "Missing or invalid bearer token.",
+                    "message": "Missing authentication credentials.",
                     "request_id": request_id,
                 }
             },
         )
 
-    token = auth_header[7:].strip()
-    try:
-        claims = verify_access_token(token)
-    except AuthError as err:
+    # 3. Handle Bearer JWT Authentication
+    if auth_header:
+        if not auth_header.startswith("Bearer "):
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                headers={"X-Request-ID": request_id},
+                content={
+                    "error": {
+                        "code": "UNAUTHORIZED",
+                        "message": "Missing or invalid bearer token.",
+                        "request_id": request_id,
+                    }
+                },
+            )
+
+        token = auth_header[7:].strip()
+        try:
+            claims = verify_access_token(token)
+        except AuthError as err:
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                headers={"X-Request-ID": request_id},
+                content={
+                    "error": {
+                        "code": "UNAUTHORIZED",
+                        "message": str(err),
+                        "request_id": request_id,
+                    }
+                },
+            )
+
+        request.state.tenant_context = TenantContext(
+            tenant_id=uuid.UUID(claims["tenant_id"]),
+            user_id=uuid.UUID(claims["user_id"]),
+            role=claims["role"],
+            groups=claims["groups"],
+            principal_type="user",
+        )
+        return await call_next(request)
+
+    # 4. Handle API Key Authentication (X-API-Key)
+    raw_key = api_key_header.strip() if api_key_header else ""
+    tenant_hint = extract_tenant_id_from_api_key(raw_key)
+    if not tenant_hint:
         return JSONResponse(
             status_code=status.HTTP_401_UNAUTHORIZED,
             headers={"X-Request-ID": request_id},
             content={
                 "error": {
                     "code": "UNAUTHORIZED",
-                    "message": str(err),
+                    "message": "Invalid API key.",
                     "request_id": request_id,
                 }
             },
         )
 
-    # Attach verified TenantContext to request.state
+    key_hash = hash_api_key(raw_key)
+
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            await set_tenant_context(session, tenant_hint)
+            stmt = select(APIKey).where(
+                APIKey.tenant_id == tenant_hint,
+                APIKey.key_hash == key_hash,
+                APIKey.revoked_at.is_(None),
+            )
+            api_key_record = (await session.execute(stmt)).scalar_one_or_none()
+
+    if not api_key_record:
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            headers={"X-Request-ID": request_id},
+            content={
+                "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Invalid API key.",
+                    "request_id": request_id,
+                }
+            },
+        )
+
     request.state.tenant_context = TenantContext(
-        tenant_id=uuid.UUID(claims["tenant_id"]),
-        user_id=uuid.UUID(claims["user_id"]),
-        role=claims["role"],
-        groups=claims["groups"],
+        tenant_id=api_key_record.tenant_id,
+        user_id=None,
+        role="service",
+        groups=[],
+        principal_type="service",
+        api_key_id=api_key_record.id,
     )
-
     return await call_next(request)
 
 
@@ -162,6 +252,9 @@ app.include_router(health_router, prefix="/v1")
 # Mount auth endpoints at /v1/auth
 app.include_router(auth_router, prefix="/v1/auth")
 
+# Mount API key management endpoints at /v1/api-keys
+app.include_router(api_keys_router, prefix="/v1")
+
 
 @app.get("/")
 async def root():
@@ -179,7 +272,9 @@ async def get_current_user_context(request: Request):
     ctx: TenantContext = request.state.tenant_context
     return {
         "tenant_id": str(ctx.tenant_id),
-        "user_id": str(ctx.user_id),
+        "user_id": str(ctx.user_id) if ctx.user_id else None,
         "role": ctx.role,
         "groups": ctx.groups,
+        "principal_type": ctx.principal_type,
+        "api_key_id": str(ctx.api_key_id) if ctx.api_key_id else None,
     }

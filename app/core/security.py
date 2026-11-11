@@ -9,7 +9,9 @@ Ticket T3a-1:
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -210,3 +212,76 @@ def verify_access_token(token: str) -> dict[str, Any]:
         raise AuthError("Authentication failed: exp claim is missing.")
 
     return payload
+
+
+# ==============================================================================
+# API Key Cryptographic Utilities (Ticket T3c)
+# ==============================================================================
+
+API_KEY_PREFIX = "rag_key_"
+
+
+def hash_api_key(raw_key: str) -> str:
+    """Compute the SHA-256 hex digest of a raw API key.
+
+    Strict security:
+    - Stores exactly 64 hex characters in database.
+    - Never logs, traces, or includes the raw key in errors.
+    """
+    if not raw_key or not isinstance(raw_key, str) or not raw_key.strip():
+        raise ValueError("API key must be a non-empty string.")
+    return hashlib.sha256(raw_key.strip().encode("utf-8")).hexdigest()
+
+
+def generate_api_key(tenant_id: uuid.UUID | str) -> tuple[str, str]:
+    """Generate a cryptographically secure random API key for a tenant.
+
+    Entropy: 256 bits (secrets.token_hex(32)).
+    Format: 'rag_key_<tenant_id_uuid>_<64_hex_secret>'
+    Storage: SHA-256 hash of the full raw API key.
+
+    Returns:
+        tuple[str, str]: (plaintext_api_key, sha256_hash)
+    """
+    try:
+        clean_tenant_id = str(uuid.UUID(str(tenant_id)))
+    except (ValueError, AttributeError) as err:
+        raise ValueError(f"tenant_id must be a valid UUID, got '{tenant_id}'.") from err
+
+    # 32 bytes = 256 bits of cryptographically secure random entropy
+    secret = secrets.token_hex(32)
+    raw_key = f"{API_KEY_PREFIX}{clean_tenant_id}_{secret}"
+    key_hash = hash_api_key(raw_key)
+    return raw_key, key_hash
+
+
+def extract_tenant_id_from_api_key(raw_key: str) -> uuid.UUID | None:
+    """Extract candidate tenant UUID from an API key as a lookup hint.
+
+    Validates key prefix and structure without trusting the extracted UUID for authorization.
+    Returns None if the key format is malformed or invalid.
+    """
+    if not raw_key or not isinstance(raw_key, str):
+        return None
+
+    clean_key = raw_key.strip()
+    if not clean_key.startswith(API_KEY_PREFIX):
+        return None
+
+    # Expected format: "rag_key_<tenant_id>_<secret>"
+    # Splitting by "_" gives ["rag", "key", "<tenant_id>", "<secret>"]
+    parts = clean_key.split("_")
+    if len(parts) != 4 or parts[0] != "rag" or parts[1] != "key":
+        return None
+
+    try:
+        tenant_uuid = uuid.UUID(parts[2])
+    except (ValueError, AttributeError):
+        return None
+
+    secret = parts[3]
+    # Ensure secret meets minimum length (at least 32 characters / 128+ bits entropy)
+    if len(secret) < 32:
+        return None
+
+    return tenant_uuid
