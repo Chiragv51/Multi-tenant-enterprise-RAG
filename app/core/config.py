@@ -1,5 +1,7 @@
 from functools import lru_cache
+from typing import Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -11,10 +13,24 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     PORT: int = 8000
 
-    # Security
+    # Security & Authentication (Ticket T3)
     SECRET_KEY: str = "change-this-to-a-super-secret-random-key-in-production"
-    JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    JWT_SECRET_KEY: str = (
+        "change-this-to-a-super-secret-jwt-key-with-at-least-32-bytes-in-production"
+    )
+    JWT_ALGORITHM: Literal["HS256"] = "HS256"
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+
+    @field_validator("JWT_SECRET_KEY")
+    @classmethod
+    def validate_jwt_secret_key(cls, v: str) -> str:
+        """Validate that JWT_SECRET_KEY is at least 32 bytes (256 bits for HS256)."""
+        if not v or len(v.encode("utf-8")) < 32:
+            raise ValueError(
+                "JWT_SECRET_KEY must be provided and must be at least 32 bytes (256 bits) for HS256 security."
+            )
+        return v
 
     # PostgreSQL - Migration / Admin connection (used by Alembic migrations)
     POSTGRES_USER: str = "rag_user"
